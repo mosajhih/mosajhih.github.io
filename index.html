@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Breeze ASR 穩定即時語音辨識</title>
+    <title>即時語音辨識服務測試(模型：Breeze ASR)</title>
 
     <style>
         * { box-sizing: border-box; }
@@ -128,10 +128,10 @@
         .error-text { color: #c62828; }
 
         #mergedText {
-            min-height: 120px;
+            min-height: 60vh;
             padding: 15px;
-            background: #f5f5f5;
-            border: 1px solid #ccc;
+            background: #FFF;
+            border: 1px solid #EEE;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
@@ -184,96 +184,93 @@
 <body>
     <div id="micPermissionDialog" role="dialog" aria-modal="true" aria-labelledby="micPermissionTitle">
         <div class="mic-permission-card">
-            <h2 id="micPermissionTitle">是否加入麥克風？</h2>
-            <p>按下「加入麥克風」後，瀏覽器會顯示麥克風權限視窗。允許後，系統會取得裝置並預先喚醒語音辨識伺服器。</p>
-            <button id="allowMicrophoneButton" type="button">加入麥克風</button>
-            <button id="dismissMicrophoneButton" type="button">暫不使用</button>
+            <h2 id="micPermissionTitle">Welcome</h2>
+            <p>本網站為即時語音辨識服務測試(模型：Breeze ASR)，採用本地端ESC4000a伺服器 搭載GPU:NVIDIA RTX™ 4000 Ada Generation，本網站僅供功能實驗測試 : </p></p>*(建議使用智慧型手機或平板進行語音辨識)</p>
+            <button id="allowMicrophoneButton" type="button">continue</button>
         </div>
     </div>
 
     <h1>即時語音辨識</h1>
-    <p>模型：Breeze ASR。系統會自動校準環境音、偵測停頓、切成 WAV，並依序上傳。</p>
 
-    <div class="control-group">
-        <label for="microphoneSelect">收音裝置</label>
-        <select id="microphoneSelect">
-            <option value="">系統預設麥克風</option>
-        </select>
-        <button id="reloadDeviceButton">重新取得麥克風</button>
-    </div>
-
-    <div class="control-group">
-        <label>瀏覽器收音處理</label>
-        <div class="check-row">
-            <label>
-                <input type="checkbox" id="echoCancellationInput" checked>
-                回音消除
-            </label>
-            <label>
-                <input type="checkbox" id="noiseSuppressionInput">
-                降噪
-            </label>
-            <label>
-                <input type="checkbox" id="autoGainControlInput">
-                自動增益
-            </label>
-        </div>
-        <small>聲音忽大忽小時，請保持「降噪」與「自動增益」關閉。使用耳機時，也可關閉回音消除。</small>
-    </div>
-
-    <div class="control-group">
-        <label for="thresholdInput">最低開始說話門檻</label>
-        <input
-            type="number"
-            id="thresholdInput"
-            value="0.012"
-            min="0.001"
-            max="1"
-            step="0.001"
-        >
-        <small>系統會依環境底噪自動提高實際門檻；收不到聲音可降低到 0.008，誤觸發可提高到 0.02。</small>
-    </div>
-
-    <div class="control-group">
-        <label for="silenceInput">連續靜音多久後斷句（毫秒）</label>
-        <input
-            type="number"
-            id="silenceInput"
-            value="700"
-            min="400"
-            max="5000"
-            step="100"
-        >
-    </div>
-
-    <div class="control-group">
-        <label for="maxSegmentInput">單段最長秒數</label>
-        <input
-            type="number"
-            id="maxSegmentInput"
-            value="30"
-            min="5"
-            max="120"
-            step="1"
-        >
-    </div>
-
-    <button id="toggleButton">開始</button>
-    <button id="clearButton">清除結果</button>
-
-    <progress id="volumeMeter" value="0" max="100"></progress>
-
-    <div id="status">尚未開始</div>
-    <div id="queueStatus">等待處理：0 段｜等待上傳：0 段</div>
-    <div id="deviceInfo">尚未取得裝置資訊</div>
-    <div id="vadInfo">底噪與門檻尚未校準</div>
-
-    <h2>合併辨識文字</h2>
     <pre id="mergedText"></pre>
+	<div style="display: flex;justify-content: center;">
+		<button id="toggleButton">開始辨識</button>
+		<button id="clearButton">清除結果</button></p>
+	</div>
+		<label>麥克風音量</label>
+    <progress id="volumeMeter" value="0" max="100"></progress>
+	
+	<div class="control-group">
+        <label for="microphoneSelect">調整麥克風</label>
+        <select id="microphoneSelect">
+            <option value="">預設麥克風</option>
+        </select>
+        <button id="reloadDeviceButton">設定</button>
+    </div>
+	
+	
+	<div style="display: none">
+        <label>系統運行儀錶板</label>
+		<div id="status">尚未開始</div>
+		<div id="queueStatus">等待處理：0 段｜等待上傳：0 段</div>
+		<div id="deviceInfo">尚未取得裝置資訊</div>
+		<div id="vadInfo">底噪與門檻尚未校準</div>
+		<h2>分段辨識結果</h2>
+		<div id="result"></div>
+		<div class="control-group">
+			<label>預設處理(測試)</label>
+			<div class="check-row">
+				<label>
+					<input type="checkbox" id="echoCancellationInput" checked>
+					回授
+				</label>
+				<label>
+					<input type="checkbox" id="noiseSuppressionInput">
+					降噪
+				</label>
+				<label>
+					<input type="checkbox" id="autoGainControlInput">
+					增益
+				</label>
+			</div>
+		</div>
 
-    <h2>分段辨識結果</h2>
-    <div id="result"></div>
+		<div class="control-group">
+			<label for="thresholdInput">最低觸發音量</label>
+			<input
+				type="number"
+				id="thresholdInput"
+				value="0.012"
+				min="0.001"
+				max="1"
+				step="0.001"
+			>
+		</div>
 
+		<div class="control-group">
+			<label for="silenceInput">觸發辨識的靜音毫秒(預設0.7秒)</label>
+			<input
+				type="number"
+				id="silenceInput"
+				value="700"
+				min="400"
+				max="5000"
+				step="100"
+			>
+		</div>
+
+		<div class="control-group">
+			<label for="maxSegmentInput">連續說話最長秒數(預設10秒)</label>
+			<input
+				type="number"
+				id="maxSegmentInput"
+				value="30"
+				min="5"
+				max="120"
+				step="1"
+			>
+		</div>
+	</div>
     <script>
         "use strict";
 
