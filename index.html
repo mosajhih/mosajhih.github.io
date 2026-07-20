@@ -58,8 +58,8 @@
             opacity: 0.5;
         }
 
-        #startButton { background: #1976d2; color: white; }
-        #stopButton { background: #c62828; color: white; }
+        #toggleButton { background: #1976d2; color: white; }
+        #toggleButton.is-listening { background: #c62828; }
         #reloadDeviceButton { background: #555; color: white; }
         #clearButton { background: #757575; color: white; }
 
@@ -141,10 +141,56 @@
             margin-top: 4px;
             color: #666;
         }
+
+        #micPermissionDialog {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.55);
+        }
+
+        #micPermissionDialog[hidden] {
+            display: none;
+        }
+
+        .mic-permission-card {
+            width: min(440px, 100%);
+            padding: 24px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.25);
+        }
+
+        .mic-permission-card h2 {
+            margin-top: 0;
+        }
+
+        #allowMicrophoneButton {
+            background: #1976d2;
+            color: white;
+        }
+
+        #dismissMicrophoneButton {
+            background: #757575;
+            color: white;
+        }
     </style>
 </head>
 
 <body>
+    <div id="micPermissionDialog" role="dialog" aria-modal="true" aria-labelledby="micPermissionTitle">
+        <div class="mic-permission-card">
+            <h2 id="micPermissionTitle">是否加入麥克風？</h2>
+            <p>按下「加入麥克風」後，瀏覽器會顯示麥克風權限視窗。允許後，系統會取得裝置並預先喚醒語音辨識伺服器。</p>
+            <button id="allowMicrophoneButton" type="button">加入麥克風</button>
+            <button id="dismissMicrophoneButton" type="button">暫不使用</button>
+        </div>
+    </div>
+
     <h1>即時語音辨識</h1>
     <p>模型：Breeze ASR。系統會自動校準環境音、偵測停頓、切成 WAV，並依序上傳。</p>
 
@@ -212,8 +258,7 @@
         >
     </div>
 
-    <button id="startButton">開始</button>
-    <button id="stopButton" disabled>停止</button>
+    <button id="toggleButton">開始</button>
     <button id="clearButton">清除結果</button>
 
     <progress id="volumeMeter" value="0" max="100"></progress>
@@ -244,9 +289,11 @@
 
         const microphoneSelect = document.getElementById("microphoneSelect");
         const reloadDeviceButton = document.getElementById("reloadDeviceButton");
-        const startButton = document.getElementById("startButton");
-        const stopButton = document.getElementById("stopButton");
+        const toggleButton = document.getElementById("toggleButton");
         const clearButton = document.getElementById("clearButton");
+        const micPermissionDialog = document.getElementById("micPermissionDialog");
+        const allowMicrophoneButton = document.getElementById("allowMicrophoneButton");
+        const dismissMicrophoneButton = document.getElementById("dismissMicrophoneButton");
 
         const thresholdInput = document.getElementById("thresholdInput");
         const silenceInput = document.getElementById("silenceInput");
@@ -294,6 +341,7 @@
         let uploadQueue = Promise.resolve();
 
         const audioObjectUrls = [];
+        let serverWarmupStarted = false;
 
         // -------------------------------------------------
         // WAV 轉換 Worker：重新取樣與編碼不占用收音主流程
@@ -464,6 +512,7 @@
             }
 
             reloadDeviceButton.disabled = true;
+            allowMicrophoneButton.disabled = true;
 
             try {
                 const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -491,13 +540,89 @@
                     microphoneSelect.value = previousDeviceId;
                 }
 
+                micPermissionDialog.hidden = true;
+                warmupServer();
                 setStatus(`已找到 ${microphones.length} 個麥克風裝置`);
             } catch (error) {
                 console.error(error);
-                setStatus(`無法取得麥克風：${error.message}`, "error");
+                micPermissionDialog.hidden = false;
+                allowMicrophoneButton.textContent = "重新要求麥克風權限";
+
+                if (!window.isSecureContext) {
+                    setStatus("無法取得麥克風：此頁面必須使用 HTTPS 或 localhost 開啟", "error");
+                } else if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+                    setStatus(
+                        "麥克風權限被拒絕。請在網址列左側的網站設定中，將「麥克風」改為「允許」，再按下「重新要求麥克風權限」。",
+                        "error"
+                    );
+                } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+                    setStatus("找不到可用的麥克風裝置，請確認麥克風已連接", "error");
+                } else if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+                    setStatus("麥克風目前無法讀取，可能正被其他程式占用", "error");
+                } else {
+                    setStatus(`無法取得麥克風：${error.message || error.name}`, "error");
+                }
             } finally {
                 reloadDeviceButton.disabled = false;
+                allowMicrophoneButton.disabled = false;
             }
+        }
+
+        // -------------------------------------------------
+        // 伺服器預熱：取得麥克風權限後送出一次「開始」
+        // -------------------------------------------------
+
+        function createSilentWavBlob(durationSeconds = 0.25, sampleRate = OUTPUT_SAMPLE_RATE) {
+            const sampleCount = Math.max(1, Math.floor(durationSeconds * sampleRate));
+            const bytesPerSample = 2;
+            const dataSize = sampleCount * bytesPerSample;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+
+            const writeAscii = (offset, value) => {
+                for (let index = 0; index < value.length; index++) {
+                    view.setUint8(offset + index, value.charCodeAt(index));
+                }
+            };
+
+            writeAscii(0, "RIFF");
+            view.setUint32(4, 36 + dataSize, true);
+            writeAscii(8, "WAVE");
+            writeAscii(12, "fmt ");
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * bytesPerSample, true);
+            view.setUint16(32, bytesPerSample, true);
+            view.setUint16(34, 16, true);
+            writeAscii(36, "data");
+            view.setUint32(40, dataSize, true);
+
+            return new Blob([buffer], { type: "audio/wav" });
+        }
+
+        function warmupServer() {
+            if (serverWarmupStarted) return;
+            serverWarmupStarted = true;
+
+            const formData = new FormData();
+            formData.append("command", "開始");
+            formData.append("file", createSilentWavBlob(), "開始.wav");
+
+            fetch(API_URL, {
+                method: "POST",
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    console.log("伺服器預熱完成");
+                })
+                .catch(error => {
+                    console.warn("伺服器預熱失敗，但不影響正常收音：", error);
+                });
         }
 
         // -------------------------------------------------
@@ -507,7 +632,7 @@
         async function startListening() {
             if (isListening) return;
 
-            startButton.disabled = true;
+            toggleButton.disabled = true;
             reloadDeviceButton.disabled = true;
             microphoneSelect.disabled = true;
 
@@ -549,7 +674,9 @@
                 startCalibration();
 
                 isListening = true;
-                stopButton.disabled = false;
+                toggleButton.disabled = false;
+                toggleButton.textContent = "停止";
+                toggleButton.classList.add("is-listening");
 
                 showActualDeviceSettings();
                 setStatus("正在校準環境音，請暫時不要說話", "calibrating");
@@ -557,7 +684,9 @@
                 console.error(error);
                 setStatus(`啟動收音失敗：${error.message}`, "error");
 
-                startButton.disabled = false;
+                toggleButton.disabled = false;
+                toggleButton.textContent = "開始";
+                toggleButton.classList.remove("is-listening");
                 reloadDeviceButton.disabled = false;
                 microphoneSelect.disabled = false;
 
@@ -814,11 +943,13 @@
             segmentCounter++;
             const segmentNumber = segmentCounter;
             const fileName = `speech_${String(segmentNumber).padStart(4, "0")}.wav`;
+            const timestamp = getCurrentTimestamp();
 
             const segmentElement = createSegmentElement(
                 segmentNumber,
                 fileName,
-                reason
+                reason,
+                timestamp
             );
 
             resetSpeechState();
@@ -864,7 +995,8 @@
                         wavBlob,
                         fileName,
                         segmentNumber,
-                        segmentElement
+                        segmentElement,
+                        timestamp
                     );
                 })
                 .catch(error => {
@@ -885,7 +1017,7 @@
             }
         }
 
-        function enqueueUpload(wavBlob, fileName, segmentNumber, segmentElement) {
+        function enqueueUpload(wavBlob, fileName, segmentNumber, segmentElement, timestamp) {
             pendingUploadCount++;
             updateQueueStatus();
 
@@ -905,7 +1037,7 @@
                         elapsedMs
                     );
 
-                    appendMergedText(transcription);
+                    appendMergedText(transcription, timestamp);
 
                     console.log(`第 ${segmentNumber} 段辨識完成`, responseData);
                 })
@@ -999,14 +1131,16 @@
             }
 
             isListening = false;
-            stopButton.disabled = true;
+            toggleButton.disabled = true;
             setStatus("已停止收音，等待剩餘音訊處理與辨識完成");
 
             await releaseAudioResources();
             await segmentProcessingQueue;
             await uploadQueue;
 
-            startButton.disabled = false;
+            toggleButton.disabled = false;
+            toggleButton.textContent = "開始";
+            toggleButton.classList.remove("is-listening");
             reloadDeviceButton.disabled = false;
             microphoneSelect.disabled = false;
             volumeMeter.value = 0;
@@ -1091,14 +1225,15 @@
                 `等待處理：${pendingProcessCount} 段｜等待上傳：${pendingUploadCount} 段`;
         }
 
-        function createSegmentElement(segmentNumber, fileName, reason) {
+        function createSegmentElement(segmentNumber, fileName, reason, timestamp) {
             const wrapper = document.createElement("div");
             wrapper.className = "segment";
 
             wrapper.innerHTML = `
                 <div class="segment-title">第 ${segmentNumber} 段</div>
                 <div class="segment-time">
-                    檔名：${escapeHtml(fileName)}
+                    時間：${escapeHtml(timestamp)}
+                    ｜檔名：${escapeHtml(fileName)}
                     ｜切割原因：${escapeHtml(reason)}
                 </div>
                 <audio class="segment-audio" controls></audio>
@@ -1145,12 +1280,28 @@
             textElement.textContent = transcription || JSON.stringify(responseData, null, 2);
         }
 
-        function appendMergedText(text) {
+        function appendMergedText(text, timestamp) {
             if (!text) return;
+            const timestampedText = `[${timestamp}] ${text}`;
             const currentText = mergedTextElement.textContent.trim();
             mergedTextElement.textContent = currentText
-                ? `${currentText}\n${text}`
-                : text;
+                ? `${currentText}\n${timestampedText}`
+                : timestampedText;
+        }
+
+        function getCurrentTimestamp() {
+            const now = new Date();
+            const pad = value => String(value).padStart(2, "0");
+
+            return [
+                now.getFullYear(),
+                pad(now.getMonth() + 1),
+                pad(now.getDate())
+            ].join("-") + " " + [
+                pad(now.getHours()),
+                pad(now.getMinutes()),
+                pad(now.getSeconds())
+            ].join(":");
         }
 
         function clearResults() {
@@ -1169,8 +1320,19 @@
         }
 
         reloadDeviceButton.addEventListener("click", loadMicrophones);
-        startButton.addEventListener("click", startListening);
-        stopButton.addEventListener("click", stopListening);
+        allowMicrophoneButton.addEventListener("click", loadMicrophones);
+        dismissMicrophoneButton.addEventListener("click", () => {
+            micPermissionDialog.hidden = true;
+            setStatus("尚未加入麥克風；需要時可按「重新取得麥克風」");
+        });
+
+        toggleButton.addEventListener("click", () => {
+            if (isListening) {
+                stopListening();
+            } else {
+                startListening();
+            }
+        });
         clearButton.addEventListener("click", clearResults);
 
         if (navigator.mediaDevices) {
@@ -1189,6 +1351,11 @@
             } else {
                 setStatus("正在收音，請開始說話", "listening");
             }
+        });
+
+        window.addEventListener("DOMContentLoaded", () => {
+            micPermissionDialog.hidden = false;
+            setStatus("請選擇是否加入麥克風");
         });
 
         window.addEventListener("beforeunload", () => {
