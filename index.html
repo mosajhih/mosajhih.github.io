@@ -1,11 +1,1200 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>我的網站</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breeze ASR 穩定即時語音辨識</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            max-width: 920px;
+            margin: 30px auto;
+            padding: 20px;
+            font-family: Arial, "Microsoft JhengHei", sans-serif;
+            line-height: 1.6;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: inline-block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        select,
+        input[type="number"] {
+            width: 100%;
+            padding: 9px;
+            border: 1px solid #bbb;
+            border-radius: 5px;
+        }
+
+        .check-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-top: 8px;
+        }
+
+        .check-row label {
+            font-weight: normal;
+        }
+
+        button {
+            padding: 10px 18px;
+            margin: 5px 5px 5px 0;
+            border: 0;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        #startButton { background: #1976d2; color: white; }
+        #stopButton { background: #c62828; color: white; }
+        #reloadDeviceButton { background: #555; color: white; }
+        #clearButton { background: #757575; color: white; }
+
+        #status,
+        #queueStatus,
+        #deviceInfo,
+        #vadInfo {
+            margin-top: 10px;
+            padding: 10px 12px;
+            background: #f3f3f3;
+            border-left: 5px solid #777;
+            white-space: pre-wrap;
+        }
+
+        #status.listening { border-left-color: #1976d2; }
+        #status.speaking { border-left-color: #2e7d32; }
+        #status.error { border-left-color: #c62828; }
+        #status.calibrating { border-left-color: #f9a825; }
+
+        #volumeMeter {
+            width: 100%;
+            height: 22px;
+            margin-top: 10px;
+        }
+
+        #result { margin-top: 20px; }
+
+        .segment {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #fafafa;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        .segment-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .segment-time {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .segment-status {
+            margin-top: 8px;
+            color: #555;
+        }
+
+        .segment-text {
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .segment audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .uploading { color: #e65100; }
+        .success { color: #2e7d32; }
+        .error-text { color: #c62828; }
+
+        #mergedText {
+            min-height: 120px;
+            padding: 15px;
+            background: #f5f5f5;
+            border: 1px solid #ccc;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        small {
+            display: block;
+            margin-top: 4px;
+            color: #666;
+        }
+    </style>
 </head>
+
 <body>
-    <h1>Hello World!</h1>
-    <p>這是我的第一個 GitHub Pages 網站。</p>
+    <h1>即時語音辨識</h1>
+    <p>模型：Breeze ASR。系統會自動校準環境音、偵測停頓、切成 WAV，並依序上傳。</p>
+
+    <div class="control-group">
+        <label for="microphoneSelect">收音裝置</label>
+        <select id="microphoneSelect">
+            <option value="">系統預設麥克風</option>
+        </select>
+        <button id="reloadDeviceButton">重新取得麥克風</button>
+    </div>
+
+    <div class="control-group">
+        <label>瀏覽器收音處理</label>
+        <div class="check-row">
+            <label>
+                <input type="checkbox" id="echoCancellationInput" checked>
+                回音消除
+            </label>
+            <label>
+                <input type="checkbox" id="noiseSuppressionInput">
+                降噪
+            </label>
+            <label>
+                <input type="checkbox" id="autoGainControlInput">
+                自動增益
+            </label>
+        </div>
+        <small>聲音忽大忽小時，請保持「降噪」與「自動增益」關閉。使用耳機時，也可關閉回音消除。</small>
+    </div>
+
+    <div class="control-group">
+        <label for="thresholdInput">最低開始說話門檻</label>
+        <input
+            type="number"
+            id="thresholdInput"
+            value="0.012"
+            min="0.001"
+            max="1"
+            step="0.001"
+        >
+        <small>系統會依環境底噪自動提高實際門檻；收不到聲音可降低到 0.008，誤觸發可提高到 0.02。</small>
+    </div>
+
+    <div class="control-group">
+        <label for="silenceInput">連續靜音多久後斷句（毫秒）</label>
+        <input
+            type="number"
+            id="silenceInput"
+            value="700"
+            min="400"
+            max="5000"
+            step="100"
+        >
+    </div>
+
+    <div class="control-group">
+        <label for="maxSegmentInput">單段最長秒數</label>
+        <input
+            type="number"
+            id="maxSegmentInput"
+            value="30"
+            min="5"
+            max="120"
+            step="1"
+        >
+    </div>
+
+    <button id="startButton">開始</button>
+    <button id="stopButton" disabled>停止</button>
+    <button id="clearButton">清除結果</button>
+
+    <progress id="volumeMeter" value="0" max="100"></progress>
+
+    <div id="status">尚未開始</div>
+    <div id="queueStatus">等待處理：0 段｜等待上傳：0 段</div>
+    <div id="deviceInfo">尚未取得裝置資訊</div>
+    <div id="vadInfo">底噪與門檻尚未校準</div>
+
+    <h2>合併辨識文字</h2>
+    <pre id="mergedText"></pre>
+
+    <h2>分段辨識結果</h2>
+    <div id="result"></div>
+
+    <script>
+        "use strict";
+
+        const API_URL = "https://asr.studygondola.com/transcribe";
+        const OUTPUT_SAMPLE_RATE = 16000;
+
+        const PRE_ROLL_MS = 350;
+        const KEEP_TAIL_MS = 220;
+        const MIN_SEGMENT_MS = 450;
+        const CALIBRATION_MS = 900;
+        const REQUIRED_VOICE_FRAMES = 2;
+        const WORKLET_CHUNK_SIZE = 2048;
+
+        const microphoneSelect = document.getElementById("microphoneSelect");
+        const reloadDeviceButton = document.getElementById("reloadDeviceButton");
+        const startButton = document.getElementById("startButton");
+        const stopButton = document.getElementById("stopButton");
+        const clearButton = document.getElementById("clearButton");
+
+        const thresholdInput = document.getElementById("thresholdInput");
+        const silenceInput = document.getElementById("silenceInput");
+        const maxSegmentInput = document.getElementById("maxSegmentInput");
+        const echoCancellationInput = document.getElementById("echoCancellationInput");
+        const noiseSuppressionInput = document.getElementById("noiseSuppressionInput");
+        const autoGainControlInput = document.getElementById("autoGainControlInput");
+
+        const volumeMeter = document.getElementById("volumeMeter");
+        const statusElement = document.getElementById("status");
+        const queueStatusElement = document.getElementById("queueStatus");
+        const deviceInfoElement = document.getElementById("deviceInfo");
+        const vadInfoElement = document.getElementById("vadInfo");
+        const resultElement = document.getElementById("result");
+        const mergedTextElement = document.getElementById("mergedText");
+
+        let mediaStream = null;
+        let audioContext = null;
+        let sourceNode = null;
+        let captureNode = null;
+        let muteGainNode = null;
+        let captureMode = "尚未啟動";
+
+        let isListening = false;
+        let isSpeaking = false;
+
+        let currentFrames = [];
+        let preRollFrames = [];
+        let preRollSampleCount = 0;
+
+        let segmentStartTime = 0;
+        let silenceStartTime = 0;
+        let trailingSilenceSamples = 0;
+        let voiceFrameCount = 0;
+        let segmentCounter = 0;
+
+        let noiseFloor = 0.003;
+        let calibrationUntil = 0;
+        let calibrationValues = [];
+        let calibrationFinished = false;
+
+        let pendingProcessCount = 0;
+        let pendingUploadCount = 0;
+        let segmentProcessingQueue = Promise.resolve();
+        let uploadQueue = Promise.resolve();
+
+        const audioObjectUrls = [];
+
+        // -------------------------------------------------
+        // WAV 轉換 Worker：重新取樣與編碼不占用收音主流程
+        // -------------------------------------------------
+
+        const wavWorkerSource = `
+            self.onmessage = function(event) {
+                try {
+                    const data = event.data;
+                    const frames = data.frameBuffers.map(buffer => new Float32Array(buffer));
+
+                    let totalLength = 0;
+                    for (const frame of frames) totalLength += frame.length;
+
+                    const usableLength = Math.max(0, totalLength - data.trimSamples);
+                    const merged = new Float32Array(usableLength);
+
+                    let targetOffset = 0;
+                    let remaining = usableLength;
+
+                    for (const frame of frames) {
+                        if (remaining <= 0) break;
+                        const count = Math.min(frame.length, remaining);
+                        merged.set(frame.subarray(0, count), targetOffset);
+                        targetOffset += count;
+                        remaining -= count;
+                    }
+
+                    const resampled = resampleAudio(
+                        merged,
+                        data.sourceSampleRate,
+                        data.outputSampleRate
+                    );
+
+                    const wavBuffer = encodeWav(resampled, data.outputSampleRate);
+
+                    self.postMessage({
+                        id: data.id,
+                        success: true,
+                        wavBuffer,
+                        sourceDurationMs: usableLength / data.sourceSampleRate * 1000,
+                        outputDurationMs: resampled.length / data.outputSampleRate * 1000
+                    }, [wavBuffer]);
+                } catch (error) {
+                    self.postMessage({
+                        id: event.data.id,
+                        success: false,
+                        error: error && error.message ? error.message : String(error)
+                    });
+                }
+            };
+
+            function resampleAudio(inputSamples, inputSampleRate, outputSampleRate) {
+                if (inputSampleRate === outputSampleRate) return inputSamples;
+                if (inputSamples.length === 0) return new Float32Array(0);
+
+                const ratio = inputSampleRate / outputSampleRate;
+                const outputLength = Math.max(1, Math.round(inputSamples.length / ratio));
+                const outputSamples = new Float32Array(outputLength);
+
+                for (let outputIndex = 0; outputIndex < outputLength; outputIndex++) {
+                    const sourcePosition = outputIndex * ratio;
+                    const leftIndex = Math.floor(sourcePosition);
+                    const rightIndex = Math.min(leftIndex + 1, inputSamples.length - 1);
+                    const fraction = sourcePosition - leftIndex;
+
+                    outputSamples[outputIndex] =
+                        inputSamples[leftIndex] * (1 - fraction) +
+                        inputSamples[rightIndex] * fraction;
+                }
+
+                return outputSamples;
+            }
+
+            function encodeWav(samples, sampleRate) {
+                const bytesPerSample = 2;
+                const channelCount = 1;
+                const dataSize = samples.length * bytesPerSample;
+                const buffer = new ArrayBuffer(44 + dataSize);
+                const view = new DataView(buffer);
+
+                writeAscii(view, 0, "RIFF");
+                view.setUint32(4, 36 + dataSize, true);
+                writeAscii(view, 8, "WAVE");
+                writeAscii(view, 12, "fmt ");
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true);
+                view.setUint16(22, channelCount, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * channelCount * bytesPerSample, true);
+                view.setUint16(32, channelCount * bytesPerSample, true);
+                view.setUint16(34, 16, true);
+                writeAscii(view, 36, "data");
+                view.setUint32(40, dataSize, true);
+
+                let offset = 44;
+                for (let index = 0; index < samples.length; index++) {
+                    const sample = Math.max(-1, Math.min(1, samples[index]));
+                    const pcmValue = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+                    view.setInt16(offset, pcmValue, true);
+                    offset += 2;
+                }
+
+                return buffer;
+            }
+
+            function writeAscii(view, offset, text) {
+                for (let index = 0; index < text.length; index++) {
+                    view.setUint8(offset + index, text.charCodeAt(index));
+                }
+            }
+        `;
+
+        const wavWorkerBlob = new Blob([wavWorkerSource], { type: "application/javascript" });
+        const wavWorkerUrl = URL.createObjectURL(wavWorkerBlob);
+        const wavWorker = new Worker(wavWorkerUrl);
+        URL.revokeObjectURL(wavWorkerUrl);
+
+        let wavWorkerRequestCounter = 0;
+        const wavWorkerPending = new Map();
+
+        wavWorker.onmessage = event => {
+            const response = event.data;
+            const pending = wavWorkerPending.get(response.id);
+            if (!pending) return;
+
+            wavWorkerPending.delete(response.id);
+
+            if (response.success) {
+                pending.resolve(response);
+            } else {
+                pending.reject(new Error(response.error || "WAV 轉換失敗"));
+            }
+        };
+
+        wavWorker.onerror = error => {
+            for (const pending of wavWorkerPending.values()) {
+                pending.reject(new Error(error.message || "WAV Worker 發生錯誤"));
+            }
+            wavWorkerPending.clear();
+        };
+
+        function convertFramesToWav(frames, sourceSampleRate, trimSamples) {
+            const id = ++wavWorkerRequestCounter;
+            const frameBuffers = frames.map(frame => frame.buffer);
+
+            return new Promise((resolve, reject) => {
+                wavWorkerPending.set(id, { resolve, reject });
+
+                wavWorker.postMessage({
+                    id,
+                    frameBuffers,
+                    sourceSampleRate,
+                    outputSampleRate: OUTPUT_SAMPLE_RATE,
+                    trimSamples
+                }, frameBuffers);
+            });
+        }
+
+        // -------------------------------------------------
+        // 麥克風裝置
+        // -------------------------------------------------
+
+        async function loadMicrophones() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                setStatus("此瀏覽器不支援麥克風收音，或目前不是安全來源（HTTPS／localhost）", "error");
+                return;
+            }
+
+            reloadDeviceButton.disabled = true;
+
+            try {
+                const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                permissionStream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const microphones = devices.filter(device => device.kind === "audioinput");
+                const previousDeviceId = microphoneSelect.value;
+
+                microphoneSelect.innerHTML = "";
+
+                const defaultOption = document.createElement("option");
+                defaultOption.value = "";
+                defaultOption.textContent = "系統預設麥克風";
+                microphoneSelect.appendChild(defaultOption);
+
+                microphones.forEach((device, index) => {
+                    const option = document.createElement("option");
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `麥克風 ${index + 1}`;
+                    microphoneSelect.appendChild(option);
+                });
+
+                if (microphones.some(device => device.deviceId === previousDeviceId)) {
+                    microphoneSelect.value = previousDeviceId;
+                }
+
+                setStatus(`已找到 ${microphones.length} 個麥克風裝置`);
+            } catch (error) {
+                console.error(error);
+                setStatus(`無法取得麥克風：${error.message}`, "error");
+            } finally {
+                reloadDeviceButton.disabled = false;
+            }
+        }
+
+        // -------------------------------------------------
+        // 啟動與建立收音節點
+        // -------------------------------------------------
+
+        async function startListening() {
+            if (isListening) return;
+
+            startButton.disabled = true;
+            reloadDeviceButton.disabled = true;
+            microphoneSelect.disabled = true;
+
+            try {
+                const selectedDeviceId = microphoneSelect.value;
+
+                const audioConstraints = {
+                    channelCount: { ideal: 1 },
+                    echoCancellation: echoCancellationInput.checked,
+                    noiseSuppression: noiseSuppressionInput.checked,
+                    autoGainControl: autoGainControlInput.checked
+                };
+
+                if (selectedDeviceId) {
+                    audioConstraints.deviceId = { exact: selectedDeviceId };
+                }
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints
+                });
+
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextClass) throw new Error("瀏覽器不支援 AudioContext");
+
+                audioContext = new AudioContextClass({ latencyHint: "interactive" });
+                if (audioContext.state === "suspended") await audioContext.resume();
+
+                sourceNode = audioContext.createMediaStreamSource(mediaStream);
+                muteGainNode = audioContext.createGain();
+                muteGainNode.gain.value = 0;
+
+                await createCaptureNode();
+
+                sourceNode.connect(captureNode);
+                captureNode.connect(muteGainNode);
+                muteGainNode.connect(audioContext.destination);
+
+                resetSpeechState();
+                startCalibration();
+
+                isListening = true;
+                stopButton.disabled = false;
+
+                showActualDeviceSettings();
+                setStatus("正在校準環境音，請暫時不要說話", "calibrating");
+            } catch (error) {
+                console.error(error);
+                setStatus(`啟動收音失敗：${error.message}`, "error");
+
+                startButton.disabled = false;
+                reloadDeviceButton.disabled = false;
+                microphoneSelect.disabled = false;
+
+                await releaseAudioResources();
+            }
+        }
+
+        async function createCaptureNode() {
+            if (audioContext.audioWorklet && window.AudioWorkletNode) {
+                const workletSource = `
+                    class PCMChunkProcessor extends AudioWorkletProcessor {
+                        constructor() {
+                            super();
+                            this.chunkSize = ${WORKLET_CHUNK_SIZE};
+                            this.buffer = new Float32Array(this.chunkSize);
+                            this.offset = 0;
+                        }
+
+                        process(inputs) {
+                            const inputGroup = inputs[0];
+                            if (!inputGroup || !inputGroup[0]) return true;
+
+                            const input = inputGroup[0];
+                            let sourceOffset = 0;
+
+                            while (sourceOffset < input.length) {
+                                const count = Math.min(
+                                    this.chunkSize - this.offset,
+                                    input.length - sourceOffset
+                                );
+
+                                this.buffer.set(
+                                    input.subarray(sourceOffset, sourceOffset + count),
+                                    this.offset
+                                );
+
+                                this.offset += count;
+                                sourceOffset += count;
+
+                                if (this.offset === this.chunkSize) {
+                                    const completedBuffer = this.buffer.buffer;
+                                    this.port.postMessage(completedBuffer, [completedBuffer]);
+                                    this.buffer = new Float32Array(this.chunkSize);
+                                    this.offset = 0;
+                                }
+                            }
+
+                            return true;
+                        }
+                    }
+
+                    registerProcessor("pcm-chunk-processor", PCMChunkProcessor);
+                `;
+
+                const workletBlob = new Blob([workletSource], { type: "application/javascript" });
+                const workletUrl = URL.createObjectURL(workletBlob);
+
+                try {
+                    await audioContext.audioWorklet.addModule(workletUrl);
+                } finally {
+                    URL.revokeObjectURL(workletUrl);
+                }
+
+                captureNode = new AudioWorkletNode(audioContext, "pcm-chunk-processor", {
+                    numberOfInputs: 1,
+                    numberOfOutputs: 1,
+                    outputChannelCount: [1]
+                });
+
+                captureNode.port.onmessage = event => {
+                    handleAudioFrame(new Float32Array(event.data));
+                };
+
+                captureMode = `AudioWorklet／${WORKLET_CHUNK_SIZE} samples`;
+                return;
+            }
+
+            // 舊瀏覽器備援。4096 比 1024 更不容易因主執行緒繁忙而漏音。
+            captureNode = audioContext.createScriptProcessor(4096, 1, 1);
+            captureNode.onaudioprocess = event => {
+                const input = event.inputBuffer.getChannelData(0);
+                handleAudioFrame(new Float32Array(input));
+            };
+            captureMode = "ScriptProcessor 備援／4096 samples";
+        }
+
+        function showActualDeviceSettings() {
+            const track = mediaStream && mediaStream.getAudioTracks()[0];
+            const settings = track && typeof track.getSettings === "function"
+                ? track.getSettings()
+                : {};
+
+            deviceInfoElement.textContent = [
+                `收音模式：${captureMode}`,
+                `AudioContext：${audioContext.sampleRate} Hz`,
+                `裝置取樣率：${settings.sampleRate || "瀏覽器未提供"}`,
+                `聲道：${settings.channelCount || "瀏覽器未提供"}`,
+                `回音消除：${String(settings.echoCancellation ?? echoCancellationInput.checked)}`,
+                `降噪：${String(settings.noiseSuppression ?? noiseSuppressionInput.checked)}`,
+                `自動增益：${String(settings.autoGainControl ?? autoGainControlInput.checked)}`
+            ].join("\n");
+        }
+
+        // -------------------------------------------------
+        // VAD：自動校準、雙門檻、連續幀觸發
+        // -------------------------------------------------
+
+        function startCalibration() {
+            calibrationValues = [];
+            calibrationUntil = performance.now() + CALIBRATION_MS;
+            calibrationFinished = false;
+            noiseFloor = 0.003;
+        }
+
+        function finishCalibration() {
+            if (calibrationFinished) return;
+            calibrationFinished = true;
+
+            if (calibrationValues.length > 0) {
+                const sorted = [...calibrationValues].sort((a, b) => a - b);
+                const index = Math.min(
+                    sorted.length - 1,
+                    Math.floor(sorted.length * 0.7)
+                );
+                noiseFloor = Math.max(0.0005, sorted[index]);
+            }
+
+            setStatus("正在收音，請開始說話", "listening");
+        }
+
+        function handleAudioFrame(frame) {
+            if (!isListening || !audioContext) return;
+
+            const rms = calculateRMS(frame);
+            updateVolumeMeter(rms);
+
+            const now = performance.now();
+            const minimumStartThreshold = Number(thresholdInput.value) || 0.012;
+
+            if (!calibrationFinished) {
+                addPreRollFrame(frame);
+                calibrationValues.push(rms);
+
+                if (now >= calibrationUntil) finishCalibration();
+
+                updateVadInfo(rms, minimumStartThreshold);
+                return;
+            }
+
+            const startThreshold = Math.max(
+                minimumStartThreshold,
+                noiseFloor * 2.8
+            );
+
+            const continueThreshold = Math.max(
+                minimumStartThreshold * 0.52,
+                noiseFloor * 1.55
+            );
+
+            updateVadInfo(rms, startThreshold, continueThreshold);
+
+            if (!isSpeaking) {
+                addPreRollFrame(frame);
+
+                if (rms < startThreshold * 0.8) {
+                    noiseFloor = noiseFloor * 0.98 + rms * 0.02;
+                }
+
+                if (rms >= startThreshold) {
+                    voiceFrameCount++;
+                } else {
+                    voiceFrameCount = 0;
+                }
+
+                if (voiceFrameCount >= REQUIRED_VOICE_FRAMES) {
+                    isSpeaking = true;
+                    segmentStartTime = now;
+                    silenceStartTime = 0;
+                    trailingSilenceSamples = 0;
+                    currentFrames = preRollFrames.slice();
+                    preRollFrames = [];
+                    preRollSampleCount = 0;
+                    voiceFrameCount = 0;
+
+                    setStatus("偵測到說話，正在錄製這一段", "speaking");
+                }
+
+                return;
+            }
+
+            currentFrames.push(frame);
+
+            if (rms >= continueThreshold) {
+                silenceStartTime = 0;
+                trailingSilenceSamples = 0;
+            } else {
+                if (silenceStartTime === 0) silenceStartTime = now;
+                trailingSilenceSamples += frame.length;
+            }
+
+            const silenceDuration = Number(silenceInput.value) || 700;
+            const maxSegmentDuration = (Number(maxSegmentInput.value) || 30) * 1000;
+            const segmentDuration = now - segmentStartTime;
+            const currentSilenceDuration = silenceStartTime > 0
+                ? now - silenceStartTime
+                : 0;
+
+            if (
+                currentSilenceDuration >= silenceDuration &&
+                segmentDuration >= MIN_SEGMENT_MS
+            ) {
+                finalizeCurrentSegment("偵測到靜音");
+                return;
+            }
+
+            if (segmentDuration >= maxSegmentDuration) {
+                finalizeCurrentSegment("達到單段最長時間");
+            }
+        }
+
+        function addPreRollFrame(frame) {
+            preRollFrames.push(frame);
+            preRollSampleCount += frame.length;
+
+            if (!audioContext) return;
+
+            const maximumSamples = Math.floor(
+                audioContext.sampleRate * PRE_ROLL_MS / 1000
+            );
+
+            while (
+                preRollSampleCount > maximumSamples &&
+                preRollFrames.length > 1
+            ) {
+                const removedFrame = preRollFrames.shift();
+                preRollSampleCount -= removedFrame.length;
+            }
+        }
+
+        // -------------------------------------------------
+        // 切段、Worker 轉 WAV、依序上傳
+        // -------------------------------------------------
+
+        function finalizeCurrentSegment(reason) {
+            if (!isSpeaking || currentFrames.length === 0 || !audioContext) {
+                resetSpeechState();
+                return;
+            }
+
+            const sourceSampleRate = audioContext.sampleRate;
+            const frames = currentFrames;
+            const capturedTrailingSilenceSamples = trailingSilenceSamples;
+
+            segmentCounter++;
+            const segmentNumber = segmentCounter;
+            const fileName = `speech_${String(segmentNumber).padStart(4, "0")}.wav`;
+
+            const segmentElement = createSegmentElement(
+                segmentNumber,
+                fileName,
+                reason
+            );
+
+            resetSpeechState();
+
+            const keepTailSamples = Math.floor(
+                sourceSampleRate * KEEP_TAIL_MS / 1000
+            );
+
+            const trimSamples = reason === "偵測到靜音"
+                ? Math.max(0, capturedTrailingSilenceSamples - keepTailSamples)
+                : 0;
+
+            pendingProcessCount++;
+            updateQueueStatus();
+
+            segmentProcessingQueue = segmentProcessingQueue
+                .then(async () => {
+                    updateSegmentStatus(segmentElement, "正在轉換 WAV……", "uploading");
+
+                    const converted = await convertFramesToWav(
+                        frames,
+                        sourceSampleRate,
+                        trimSamples
+                    );
+
+                    if (converted.sourceDurationMs < MIN_SEGMENT_MS) {
+                        updateSegmentStatus(segmentElement, "聲音過短，已略過", "error-text");
+                        return;
+                    }
+
+                    const wavBlob = new Blob(
+                        [converted.wavBuffer],
+                        { type: "audio/wav" }
+                    );
+
+                    attachAudioPreview(
+                        segmentElement,
+                        wavBlob,
+                        converted.outputDurationMs
+                    );
+
+                    enqueueUpload(
+                        wavBlob,
+                        fileName,
+                        segmentNumber,
+                        segmentElement
+                    );
+                })
+                .catch(error => {
+                    console.error(`第 ${segmentNumber} 段處理失敗`, error);
+                    updateSegmentStatus(
+                        segmentElement,
+                        `音訊處理失敗：${error.message}`,
+                        "error-text"
+                    );
+                })
+                .finally(() => {
+                    pendingProcessCount--;
+                    updateQueueStatus();
+                });
+
+            if (isListening) {
+                setStatus(`第 ${segmentNumber} 段已切割，繼續收音`, "listening");
+            }
+        }
+
+        function enqueueUpload(wavBlob, fileName, segmentNumber, segmentElement) {
+            pendingUploadCount++;
+            updateQueueStatus();
+
+            uploadQueue = uploadQueue
+                .then(async () => {
+                    updateSegmentStatus(segmentElement, "正在上傳並辨識……", "uploading");
+
+                    const startedAt = performance.now();
+                    const responseData = await uploadWav(wavBlob, fileName);
+                    const elapsedMs = performance.now() - startedAt;
+                    const transcription = extractTranscription(responseData);
+
+                    updateSegmentSuccess(
+                        segmentElement,
+                        transcription,
+                        responseData,
+                        elapsedMs
+                    );
+
+                    appendMergedText(transcription);
+
+                    console.log(`第 ${segmentNumber} 段辨識完成`, responseData);
+                })
+                .catch(error => {
+                    console.error(`第 ${segmentNumber} 段上傳失敗`, error);
+                    updateSegmentStatus(
+                        segmentElement,
+                        `辨識失敗：${error.message}`,
+                        "error-text"
+                    );
+                })
+                .finally(() => {
+                    pendingUploadCount--;
+                    updateQueueStatus();
+                });
+        }
+
+        async function uploadWav(wavBlob, fileName) {
+            const formData = new FormData();
+            formData.append("file", wavBlob, fileName);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    body: formData,
+                    signal: controller.signal
+                });
+
+                const responseText = await response.text();
+                let responseData;
+
+                try {
+                    responseData = JSON.parse(responseText);
+                } catch {
+                    responseData = { text: responseText };
+                }
+
+                if (!response.ok) {
+                    const detail = typeof responseData === "object"
+                        ? JSON.stringify(responseData)
+                        : responseText;
+                    throw new Error(`HTTP ${response.status}：${detail}`);
+                }
+
+                return responseData;
+            } catch (error) {
+                if (error.name === "AbortError") {
+                    throw new Error("API 等待超過 120 秒");
+                }
+                throw error;
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        }
+
+        function extractTranscription(data) {
+            if (!data) return "";
+            if (typeof data === "string") return data;
+
+            const possibleFields = [
+                data.text,
+                data.transcription,
+                data.result,
+                data.stdout,
+                data.message
+            ];
+
+            for (const value of possibleFields) {
+                if (typeof value === "string") return value.trim();
+            }
+
+            if (data.result && typeof data.result.text === "string") {
+                return data.result.text.trim();
+            }
+
+            return JSON.stringify(data, null, 2);
+        }
+
+        // -------------------------------------------------
+        // 停止與釋放資源
+        // -------------------------------------------------
+
+        async function stopListening() {
+            if (!isListening) return;
+
+            if (isSpeaking && currentFrames.length > 0) {
+                finalizeCurrentSegment("使用者停止收音");
+            }
+
+            isListening = false;
+            stopButton.disabled = true;
+            setStatus("已停止收音，等待剩餘音訊處理與辨識完成");
+
+            await releaseAudioResources();
+            await segmentProcessingQueue;
+            await uploadQueue;
+
+            startButton.disabled = false;
+            reloadDeviceButton.disabled = false;
+            microphoneSelect.disabled = false;
+            volumeMeter.value = 0;
+
+            setStatus("收音已停止，所有工作已處理完成");
+        }
+
+        async function releaseAudioResources() {
+            if (captureNode) {
+                if (captureNode.port) captureNode.port.onmessage = null;
+                if ("onaudioprocess" in captureNode) captureNode.onaudioprocess = null;
+                try { captureNode.disconnect(); } catch {}
+                captureNode = null;
+            }
+
+            if (sourceNode) {
+                try { sourceNode.disconnect(); } catch {}
+                sourceNode = null;
+            }
+
+            if (muteGainNode) {
+                try { muteGainNode.disconnect(); } catch {}
+                muteGainNode = null;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            if (audioContext) {
+                try { await audioContext.close(); } catch (error) { console.warn(error); }
+                audioContext = null;
+            }
+
+            resetSpeechState();
+        }
+
+        function resetSpeechState() {
+            isSpeaking = false;
+            currentFrames = [];
+            preRollFrames = [];
+            preRollSampleCount = 0;
+            segmentStartTime = 0;
+            silenceStartTime = 0;
+            trailingSilenceSamples = 0;
+            voiceFrameCount = 0;
+        }
+
+        // -------------------------------------------------
+        // 工具與畫面
+        // -------------------------------------------------
+
+        function calculateRMS(samples) {
+            let sum = 0;
+            for (let index = 0; index < samples.length; index++) {
+                sum += samples[index] * samples[index];
+            }
+            return Math.sqrt(sum / samples.length);
+        }
+
+        function setStatus(text, className = "") {
+            statusElement.textContent = text;
+            statusElement.className = className;
+        }
+
+        function updateVolumeMeter(rms) {
+            volumeMeter.value = Math.min(100, rms * 1000);
+        }
+
+        function updateVadInfo(rms, startThreshold, continueThreshold = null) {
+            vadInfoElement.textContent = [
+                `即時 RMS：${rms.toFixed(5)}`,
+                `環境底噪：${noiseFloor.toFixed(5)}`,
+                `開始門檻：${Number(startThreshold).toFixed(5)}`,
+                `持續門檻：${continueThreshold === null ? "校準中" : Number(continueThreshold).toFixed(5)}`
+            ].join("｜");
+        }
+
+        function updateQueueStatus() {
+            queueStatusElement.textContent =
+                `等待處理：${pendingProcessCount} 段｜等待上傳：${pendingUploadCount} 段`;
+        }
+
+        function createSegmentElement(segmentNumber, fileName, reason) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "segment";
+
+            wrapper.innerHTML = `
+                <div class="segment-title">第 ${segmentNumber} 段</div>
+                <div class="segment-time">
+                    檔名：${escapeHtml(fileName)}
+                    ｜切割原因：${escapeHtml(reason)}
+                </div>
+                <audio class="segment-audio" controls></audio>
+                <div class="segment-status">正在整理音訊……</div>
+                <pre class="segment-text"></pre>
+            `;
+
+            resultElement.prepend(wrapper);
+            return wrapper;
+        }
+
+        function attachAudioPreview(segmentElement, wavBlob, durationMs) {
+            const audioElement = segmentElement.querySelector(".segment-audio");
+            const timeElement = segmentElement.querySelector(".segment-time");
+            const audioUrl = URL.createObjectURL(wavBlob);
+
+            audioObjectUrls.push(audioUrl);
+            audioElement.src = audioUrl;
+
+            const sizeKilobytes = (wavBlob.size / 1024).toFixed(1);
+            timeElement.textContent +=
+                `｜長度：${(durationMs / 1000).toFixed(2)} 秒｜大小：${sizeKilobytes} KB`;
+        }
+
+        function updateSegmentStatus(segmentElement, text, className) {
+            const status = segmentElement.querySelector(".segment-status");
+            status.textContent = text;
+            status.className = `segment-status ${className}`;
+        }
+
+        function updateSegmentSuccess(
+            segmentElement,
+            transcription,
+            responseData,
+            elapsedMs
+        ) {
+            updateSegmentStatus(
+                segmentElement,
+                `辨識完成，API ${Math.round(elapsedMs)} ms`,
+                "success"
+            );
+
+            const textElement = segmentElement.querySelector(".segment-text");
+            textElement.textContent = transcription || JSON.stringify(responseData, null, 2);
+        }
+
+        function appendMergedText(text) {
+            if (!text) return;
+            const currentText = mergedTextElement.textContent.trim();
+            mergedTextElement.textContent = currentText
+                ? `${currentText}\n${text}`
+                : text;
+        }
+
+        function clearResults() {
+            for (const url of audioObjectUrls.splice(0)) {
+                URL.revokeObjectURL(url);
+            }
+            resultElement.innerHTML = "";
+            mergedTextElement.textContent = "";
+            segmentCounter = 0;
+        }
+
+        function escapeHtml(text) {
+            const element = document.createElement("div");
+            element.textContent = String(text);
+            return element.innerHTML;
+        }
+
+        reloadDeviceButton.addEventListener("click", loadMicrophones);
+        startButton.addEventListener("click", startListening);
+        stopButton.addEventListener("click", stopListening);
+        clearButton.addEventListener("click", clearResults);
+
+        if (navigator.mediaDevices) {
+            navigator.mediaDevices.addEventListener("devicechange", () => {
+                if (!isListening) loadMicrophones();
+            });
+        }
+
+        document.addEventListener("visibilitychange", () => {
+            if (!isListening) return;
+
+            if (document.hidden) {
+                setStatus("頁面已進入背景，行動裝置可能暫停或降低收音頻率", "error");
+            } else if (isSpeaking) {
+                setStatus("偵測到說話，正在錄製這一段", "speaking");
+            } else {
+                setStatus("正在收音，請開始說話", "listening");
+            }
+        });
+
+        window.addEventListener("beforeunload", () => {
+            for (const url of audioObjectUrls) URL.revokeObjectURL(url);
+            wavWorker.terminate();
+        });
+    </script>
 </body>
 </html>
