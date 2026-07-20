@@ -1319,10 +1319,10 @@
 
         reloadDeviceButton.addEventListener("click", loadMicrophones);
         allowMicrophoneButton.addEventListener("click", loadMicrophones);
-        dismissMicrophoneButton.addEventListener("click", () => {
-            micPermissionDialog.hidden = true;
-            setStatus("尚未加入麥克風；需要時可按「重新取得麥克風」");
-        });
+        //dismissMicrophoneButton.addEventListener("click", () => {
+            //micPermissionDialog.hidden = true;
+            //setStatus("尚未加入麥克風；需要時可按「重新取得麥克風」");
+        //});
 
         toggleButton.addEventListener("click", () => {
             if (isListening) {
