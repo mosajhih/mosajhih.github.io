@@ -192,7 +192,9 @@
     </div>
 
     <h1>即時語音辨識</h1>
-
+    <label>版本：v1.2</label>
+    <label>這個版本有兩個缺點，後續改善中。</p>1. 第一句話（第一次呼叫）會因伺服器在開啟讀取模型，所以會比較慢（大約5秒），第二句以後則進行即時辨識（1-2秒）</label></p>
+    <label>2. 長時間連續辨識時，有機率因網路問題（網路不穩）導致傳檔不全或中斷，造成程式當機</label>
     <pre id="mergedText"></pre>
 	<div style="display: flex;justify-content: center;">
 		<button id="toggleButton">開始辨識</button>
